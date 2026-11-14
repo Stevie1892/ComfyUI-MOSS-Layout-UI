@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.1+fork.1 · 2026-11-14
+
+本 fork 的首个发布版，基于上游 v1.3.1。
+
+- **画布宽高支持任意上游节点**：`inputNumber()` 原先只认 `PrimitiveInt` / 前端 `PrimitiveNode`，其余来源（`ResolutionMasterSimplify`、`PixaromaResolution`、`comfyui-logic` 的 `Int`、`ImpactInt` 等）返回 `NaN`，画布静默停在默认 `1088 × 1920`，导致框与出图尺寸错位。现改为 `resolveNumber()`：顺连线解析同名 widget 与通用 `value` widget，不限节点类名，`Reroute` 穿透、循环引用防护不变。
+- 新增 `tests/canvas-size.test.mjs`：覆盖 8 种接法的回归测试，可在未打补丁的上游代码上反向验证（6 项失败）。
+
 ## 1.3.1 · 2026-10-23
 
 - 可以直接导入官方指南里那种**模型用布局提示词**（`bbox_coord_space:"abs_centralized"` + `bbox_format:"yxyx"`）：它不带宽高，按当前画布尺寸反算成百分比；`summary.caption / meta / canvas / palette` 与元素的 `tags / palette`、文字内容一并还原。

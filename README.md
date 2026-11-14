@@ -1,5 +1,12 @@
 # ComfyUI MOSS Layout UI
 
+> **本仓库是上游的 fork** — upstream: [MIKOU306/ComfyUI-MOSS-Layout-UI](https://github.com/MIKOU306/ComfyUI-MOSS-Layout-UI)（MIT）。
+> 在 v1.3.1 之上只加了一个补丁：**画布宽高可以跟随任意上游节点**，不再只认 `PrimitiveInt`。详见 [Fork 改动](#fork-改动)，其余均为上游代码。
+>
+> This is a fork of [MIKOU306/ComfyUI-MOSS-Layout-UI](https://github.com/MIKOU306/ComfyUI-MOSS-Layout-UI) (MIT).
+> One patch on top of v1.3.1: the canvas size now follows any upstream node, not just `PrimitiveInt`.
+> See [Fork changes](#fork-changes). Everything else is upstream code.
+
 给 [MOSS-Image](https://github.com/OpenMOSS/MOSS-Image) 用的三节点可视化排版插件：**在画布上拖框 → 编辑元素提示词 → 一键编译成模型能吃的 `summary/items` 紧凑 JSON**。不用手写坐标，换画布尺寸也不用重排。
 
 ![screenshot](docs/screenshot-square.png)
@@ -27,7 +34,7 @@
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/MIKOU306/ComfyUI-MOSS-Layout-UI.git comfyui-moss-layout-ui
+git clone https://github.com/Stevie1892/ComfyUI-MOSS-Layout-UI.git comfyui-moss-layout-ui
 ```
 
 或直接下载 zip 解压到 `ComfyUI/custom_nodes/comfyui-moss-layout-ui/`。同一实例只保留一份插件：如果已有旧版手动安装的 `moss-layout-ui`，请先将它移出 `custom_nodes`，避免与 Registry 安装版重复加载。然后：
@@ -135,6 +142,39 @@ git clone https://github.com/MIKOU306/ComfyUI-MOSS-Layout-UI.git comfyui-moss-la
 文字过长时可手动换行、减小参考字号或扩大文字框。容量检查是排版估算，没有通用的「人物必须占宽 65%」或「文字必须距边缘 60 像素」硬限制。
 
 模型的布局功能与手动换行格式见 [MOSS 官方用户指南](https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE_ZH.md#layout-prompt实验性功能)。插件的字体设置会转成 caption 中的文字描述，不会向模型添加自定义字体参数。
+
+---
+
+## Fork 改动
+
+本 fork 相对上游 v1.3.1 只有一个代码改动，落在 `web/moss_checks.js`。
+
+**问题**：上游的 `inputNumber()` 只认 `PrimitiveInt` 和前端 `PrimitiveNode` 两种宽高来源，其余节点一律返回 `NaN`：
+
+```js
+const type = source?.comfyClass ?? source?.type;
+return type === "PrimitiveInt" || type === "PrimitiveNode"
+    ? inputNumber(source, "value", seen) : NaN;
+```
+
+后果：把画布宽高接到 `ResolutionMasterSimplify`、`PixaromaResolution`、`comfyui-logic` 的 `Int`、`ImpactInt` 之类的节点上时读不到值，画布**静默退回默认的 `1088 × 1920`**。编辑器里摆的框因此和实际出图尺寸错位（画布按 1088×1920 编译，实际生成 1024×1536），bbox 越界、构图偏移，而且不报任何错。
+
+**改法**：换成 `resolveNumber()`，顺着连线往上走，先认同名 widget（`width` / `height`），再认通用 `value` widget，不再限制节点类名；`Reroute` 照旧穿透，`seen` 集合防循环引用。
+
+回归覆盖（`node tests/canvas-size.test.mjs`）：
+
+| 场景 | 上游 | 本 fork |
+| --- | --- | --- |
+| 核心 `PrimitiveInt`（value 手填） | 1536 | 1536 |
+| `comfyui-logic` 的 `Int` | NaN | 1536 |
+| `ResolutionMasterSimplify` 直连 | NaN | 1536 / 1024 |
+| `PixaromaResolution` 直连 | NaN | 768 / 1344 |
+| `PrimitiveInt.value` 又接分辨率节点 | NaN | 1536 |
+| `Reroute` 中转 | 1536 | 1536 |
+| 断开连线退回画布自身 widget | 1088 | 1088 |
+| A↔B 循环引用 | NaN，不卡死 | NaN，不卡死 |
+
+这套测试在未打补丁的上游代码上会有 6 项失败，可自行反向验证。
 
 ---
 

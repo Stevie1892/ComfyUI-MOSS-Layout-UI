@@ -1,21 +1,64 @@
 import { upstreamCanvas } from "./moss_common.js";
 import { textMetrics } from "./moss_text.js";
 
-export function inputNumber(node, name, seen = new Set()) {
+function number(raw) {
+  return typeof raw === "number" || (typeof raw === "string" && raw.trim()) ? Number(raw) : NaN;
+}
+
+function widgetNumber(node, names) {
+  for (const name of names) {
+    const widget = node?.widgets?.find(entry => entry.name === name);
+    if (!widget) continue;
+    const value = number(widget.value);
+    if (Number.isFinite(value)) return value;
+  }
+  return NaN;
+}
+
+function linkedSource(node, name) {
+  const slot = node?.inputs?.findIndex(input => input.name === name) ?? -1;
+  if (slot < 0 || node.inputs[slot].link == null) return null;
+  return node.getInputNode?.(slot) ?? null;
+}
+
+// Resolve the number a node publishes for `wanted` ("width" or "height").
+// LOCAL PATCH: upstream restricted this to PrimitiveInt / PrimitiveNode, which
+// made every other size source (ResolutionMasterSimplify, PixaromaResolution,
+// comfyui-logic Int, ImpactInt, ...) silently return NaN and froze the canvas
+// at its default 1088x1920. A number is a number: follow links until a widget
+// value is found, whatever the node class is.
+function resolveNumber(node, wanted, seen = new Set()) {
   if (!node || seen.has(node)) return NaN;
   seen.add(node);
+  let origin = node;
+  while ((origin?.comfyClass ?? origin?.type) === "Reroute") {
+    origin = origin.getInputNode?.(0);
+    if (!origin || seen.has(origin)) return NaN;
+    seen.add(origin);
+  }
+  // A link on the same-named input wins over the node's own (possibly stale) widget.
+  const sameLink = linkedSource(origin, wanted);
+  if (sameLink) return resolveNumber(sameLink, wanted, seen);
+  const valueLink = linkedSource(origin, "value");
+  if (valueLink) {
+    const upstream = resolveNumber(valueLink, wanted, seen);
+    if (Number.isFinite(upstream)) return upstream;
+  }
+  const direct = widgetNumber(origin, [wanted]);
+  if (Number.isFinite(direct)) return direct;
+  // PrimitiveInt / Logic Int / ImpactInt carry the number as `value`.
+  const constant = widgetNumber(origin, ["value"]);
+  if (Number.isFinite(constant)) return constant;
+  return NaN;
+}
+
+export function inputNumber(node, name, seen = new Set()) {
+  if (!node || seen.has(node)) return NaN;
   const slot = node.inputs?.findIndex(input => input.name === name) ?? -1;
   if (slot >= 0 && node.inputs[slot].link != null) {
-    let source = node.getInputNode?.(slot);
-    while ((source?.comfyClass ?? source?.type) === "Reroute") {
-      if (seen.has(source)) return NaN;
-      seen.add(source); source = source.getInputNode?.(0);
-    }
-    const type = source?.comfyClass ?? source?.type;
-    return type === "PrimitiveInt" || type === "PrimitiveNode" ? inputNumber(source, "value", seen) : NaN;
+    return resolveNumber(node.getInputNode?.(slot), name, new Set(seen));
   }
-  const raw = node.widgets?.find(widget => widget.name === name)?.value;
-  return typeof raw === "number" || (typeof raw === "string" && raw.trim()) ? Number(raw) : NaN;
+  return number(node.widgets?.find(widget => widget.name === name)?.value);
 }
 
 export function layoutWarnings(layout) {
